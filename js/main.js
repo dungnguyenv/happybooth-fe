@@ -639,8 +639,8 @@ function initMasonryColumns() {
 function initPortfolioLoadMore() {
   var button = document.querySelector('.gallery__load-more');
   if (!button) return;
-  if (button.dataset.populated) return;
-  button.dataset.populated = '1';
+  // No dataset guard here: the router caches this page's HTML when leaving it,
+  // so a stored flag would come back without its click listener.
 
   var wrapper = button.closest('.gallery__more');
   var batchSize = 30;
