@@ -155,7 +155,7 @@
     var bannerUrl = event && url(event.banner_url);
     var art = bannerUrl
       ? '<img class="album-message__art" src="' + attr(bannerUrl) + '" alt="">'
-      : '<img class="album-message__art album-message__art--logo" src="/assets/SVG/Logo_web.svg" alt="">';
+      : '<img class="album-message__art album-message__art--logo" src="/assets/icons/logo.svg" alt="">';
     var html = '';
     if (kind === 'not_found') {
       html = artLogo() +
@@ -184,7 +184,7 @@
   }
 
   function artLogo() {
-    return '<img class="album-message__art album-message__art--logo" src="/assets/SVG/Logo_web.svg" alt="">';
+    return '<img class="album-message__art album-message__art--logo" src="/assets/icons/logo.svg" alt="">';
   }
 
   function renderStage() {

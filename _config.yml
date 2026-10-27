@@ -1,0 +1,10 @@
+# GitHub Pages builds the site with Jekyll (github-pages gem).
+# No theme: the site uses none, so no theme layout or stylesheet can touch the output.
+theme: null
+
+# Keep internal notes, tests and local-only files off happybooth.vn.
+exclude:
+  - docs
+  - tests
+  - local
+  - CLAUDE.md
