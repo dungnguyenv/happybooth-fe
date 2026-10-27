@@ -6,7 +6,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
-const root = path.resolve(__dirname, '..');
+const root = fs.realpathSync.native(path.resolve(__dirname, '..'));
 const port = Number(process.argv[2]) || 8765;
 const FRONT_MATTER_RE = /^---\n([\s\S]*?)\n---\n/;
 const TYPES = {
@@ -21,9 +21,12 @@ const TYPES = {
 const config = fs.readFileSync(path.join(root, '_config.yml'), 'utf8');
 const hidden = ['pages', '_config.yml', ...[...config.matchAll(/^\s+-\s+(\S+)/gm)].map(m => m[1])];
 
+// Called with a realpath, so symlinks can't escape root and the on-disk casing is what's checked
+// (macOS would otherwise serve /DOCS/… past the list).
 function published(file) {
-  const top = path.relative(root, file).split(path.sep)[0];
-  return !top.startsWith('.') && !hidden.includes(top);
+  const segments = path.relative(root, file).split(path.sep);
+  if (segments[0] === '..' || segments.some(s => s.startsWith('.'))) return false;
+  return !hidden.some(h => segments[0].toLowerCase() === h.toLowerCase());
 }
 
 // Re-read on every request so new or moved pages show up without a restart.
@@ -48,8 +51,9 @@ function resolve(urlPath) {
   const candidates = urlPath === '/' ? ['/index.html'] : [urlPath, urlPath + '.html'];
   for (const c of candidates) {
     if (links[c]) return links[c];
-    const file = path.join(root, c);
-    if (file.startsWith(root + path.sep) && published(file) && fs.existsSync(file) && fs.statSync(file).isFile()) return file;
+    let file;
+    try { file = fs.realpathSync.native(path.join(root, c)); } catch { continue; }
+    if (published(file) && fs.statSync(file).isFile()) return file;
   }
   return null;
 }
@@ -64,19 +68,28 @@ function send(req, res, file, status) {
   const size = fs.statSync(file).size;
   const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
   if (range) {  // Safari will not play video without range requests
-    const start = range[1] ? Number(range[1]) : size - Number(range[2]);
-    const end = range[1] && range[2] ? Number(range[2]) : size - 1;
+    const start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]));
+    const end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+    if ((!range[1] && !range[2]) || start > end) {
+      res.writeHead(416, { 'Content-Range': `bytes */${size}` });
+      return res.end();
+    }
     res.writeHead(206, { 'Content-Type': type, 'Accept-Ranges': 'bytes',
       'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': end - start + 1 });
-    return fs.createReadStream(file, { start, end }).pipe(res);
+    return fs.createReadStream(file, { start, end }).on('error', () => res.destroy()).pipe(res);
   }
   res.writeHead(status, { 'Content-Type': type, 'Content-Length': size, 'Accept-Ranges': 'bytes' });
-  fs.createReadStream(file).pipe(res);
+  fs.createReadStream(file).on('error', () => res.destroy()).pipe(res);
 }
 
 http.createServer((req, res) => {
-  const urlPath = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
-  const file = resolve(urlPath);
-  if (file) send(req, res, file, 200);
-  else send(req, res, path.join(root, '404.html'), 404);
-}).listen(port, () => console.log(`Happy Booth on http://localhost:${port}`));
+  try {
+    const urlPath = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
+    const file = resolve(urlPath);
+    if (file) send(req, res, file, 200);
+    else send(req, res, path.join(root, '404.html'), 404);
+  } catch (err) {  // a malformed request must not take the server down
+    if (!res.headersSent) res.writeHead(400);
+    res.end();
+  }
+}).listen(port, '127.0.0.1', () => console.log(`Happy Booth on http://localhost:${port}`));
