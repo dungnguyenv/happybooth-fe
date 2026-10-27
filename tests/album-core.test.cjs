@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const core = require('../js/album-core.js');
+const core = require('../assets/js/album-core.js');
 
 const NOW = Date.parse('2026-10-24T10:00:00Z');
 const MIN = 60 * 1000;

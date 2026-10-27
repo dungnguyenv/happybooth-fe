@@ -1,0 +1,12 @@
+# GitHub Pages builds the site with Jekyll (github-pages gem).
+# Pages under pages/ carry a `permalink` front matter that puts them back at the root.
+# No theme: the site uses none, so no theme layout or stylesheet can touch the output.
+theme: null
+
+# Keep internal notes, tests, scripts and local-only files off happybooth.vn.
+exclude:
+  - docs
+  - tests
+  - scripts
+  - local
+  - CLAUDE.md

@@ -1,0 +1,485 @@
+---
+permalink: /album.html
+---
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <!-- Photos, clips and album data only ever come from the API (localhost:8010 is the backend's docker compose). -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https://api.happybooth.vn http://localhost:8010; media-src https://api.happybooth.vn http://localhost:8010; connect-src https://api.happybooth.vn http://localhost:8010; base-uri 'none'; form-action 'none'">
+  <meta name="theme-color" content="#FFFFFF">
+  <title>Ảnh của bạn — Happy Booth</title>
+  <meta name="description" content="Xem và tải ảnh photobooth của bạn từ Happy Booth.">
+  <meta property="og:title" content="Ảnh của bạn — Happy Booth">
+  <meta property="og:description" content="Xem và tải ảnh photobooth của bạn từ Happy Booth.">
+  <meta property="og:image" content="https://happybooth.vn/assets/images/og-cover.jpg">
+
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="icon" type="image/svg+xml" href="/assets/icons/logo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://api.happybooth.vn" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/css/style.css">
+
+  <!-- Album page CSS lives here, like 404.html, so style.css (and its cache key) stays untouched. -->
+  <style>
+    :root {
+      --album-bar: 64px;
+      --album-stage-h: min(72vh, 820px);
+      --album-thumb: 80px;
+    }
+    body {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background: var(--color-bg);
+    }
+    [hidden] { display: none !important; }
+
+    /* ---------- Top bar ---------- */
+    .album-bar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      height: var(--album-bar);
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 0 var(--gutter);
+      background: rgba(255, 255, 255, 0.94);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--color-border);
+    }
+    .album-bar__brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+      font: 800 20px/1 var(--font-display);
+      letter-spacing: -0.03em;
+      color: var(--color-text);
+    }
+    .album-bar__brand img { width: 32px; height: 32px; border-radius: 8px; }
+    .album-bar__sep { color: var(--color-border); font-size: 22px; flex-shrink: 0; }
+    .album-bar__title {
+      min-width: 0;
+      flex: 1;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      font: 600 18px/1.2 var(--font-display);
+      letter-spacing: -0.01em;
+    }
+    .album-bar__actions { display: flex; gap: 8px; flex-shrink: 0; }
+    .album-icon-btn {
+      width: 44px;
+      height: 44px;
+      display: inline-grid;
+      place-items: center;
+      border: 1px solid var(--color-border);
+      border-radius: 50%;
+      background: #fff;
+      color: var(--color-text);
+      cursor: pointer;
+      transition: color var(--transition-speed), border-color var(--transition-speed), background var(--transition-speed);
+    }
+    .album-icon-btn:hover:not(:disabled) { color: var(--color-pink); border-color: var(--color-pink); }
+    .album-icon-btn:disabled { opacity: 0.35; cursor: default; }
+    .album-icon-btn:focus-visible,
+    .album-nav:focus-visible,
+    .album-play:focus-visible,
+    .album-thumb:focus-visible { outline: 3px solid var(--color-pink); outline-offset: 2px; }
+
+    /* ---------- Stage ---------- */
+    .album-main { flex: 1; display: flex; flex-direction: column; }
+    .album-stage {
+      position: relative;
+      height: var(--album-stage-h);
+      display: grid;
+      place-items: center;
+      padding: 24px 88px;
+      background: var(--color-stone);
+      overflow: hidden;
+      /* Vertical scroll and pinch-zoom stay native; horizontal swipes change photos. */
+      touch-action: pan-y pinch-zoom;
+    }
+    .album-photo { position: relative; display: flex; max-width: 100%; max-height: 100%; }
+    .album-photo img {
+      display: block;
+      max-width: 100%;
+      max-height: calc(var(--album-stage-h) - 48px);
+      width: auto;
+      height: auto;
+      border-radius: var(--radius);
+      box-shadow: 0 18px 50px rgba(26, 26, 26, 0.16);
+      background: #fff;
+      transition: opacity 0.2s ease;
+    }
+    .album-photo img.is-fading { opacity: 0; }
+    /* Sized like the photo: before metadata loads, the poster (the clip's first
+       frame, already cached from its thumbnail) gives the box its shape. */
+    .album-photo video {
+      display: block;
+      max-width: 100%;
+      max-height: calc(var(--album-stage-h) - 48px);
+      width: auto;
+      height: auto;
+      border-radius: var(--radius);
+      box-shadow: 0 18px 50px rgba(26, 26, 26, 0.16);
+      background: #000;
+    }
+    .album-play {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      z-index: 1;
+      width: 72px;
+      height: 72px;
+      display: grid;
+      place-items: center;
+      transform: translate(-50%, -50%);
+      border: 1px solid var(--color-border);
+      border-radius: 50%;
+      background: #fff;
+      color: var(--color-text);
+      box-shadow: 0 10px 30px rgba(26, 26, 26, 0.22);
+      cursor: pointer;
+      transition: color var(--transition-speed), border-color var(--transition-speed);
+    }
+    .album-play svg { margin-left: 4px; }
+    .album-play:hover { color: var(--color-pink); border-color: var(--color-pink); }
+    .album-video-error {
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      bottom: 12px;
+      margin: 0;
+      padding: 10px 14px;
+      border-radius: var(--radius);
+      background: rgba(26, 26, 26, 0.85);
+      color: #fff;
+      font: 600 14px/1.4 var(--font-sans);
+      text-align: center;
+    }
+    .album-counter {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      padding: 6px 14px;
+      border-radius: 999px;
+      background: rgba(26, 26, 26, 0.85);
+      color: #fff;
+      font: 600 14px/1.2 var(--font-sans);
+      font-variant-numeric: tabular-nums;
+    }
+    .album-pending {
+      position: relative;
+      width: min(420px, 100%);
+      aspect-ratio: 2 / 3;
+      max-height: calc(var(--album-stage-h) - 48px);
+      display: grid;
+      place-items: center;
+      align-content: center;
+      gap: 16px;
+      padding: 24px;
+      border-radius: var(--radius);
+      background: var(--color-blush);
+      text-align: center;
+      font-weight: 600;
+    }
+    .album-nav {
+      position: absolute;
+      top: 50%;
+      z-index: 2;
+      width: 52px;
+      height: 52px;
+      display: grid;
+      place-items: center;
+      transform: translateY(-50%);
+      border: 1px solid var(--color-border);
+      border-radius: 50%;
+      background: #fff;
+      color: var(--color-text);
+      cursor: pointer;
+      transition: color var(--transition-speed), border-color var(--transition-speed);
+    }
+    .album-nav:hover { color: var(--color-pink); border-color: var(--color-pink); }
+    .album-nav--prev { left: 20px; }
+    .album-nav--next { right: 20px; }
+
+    /* ---------- Messages (empty, expired, not found…) ---------- */
+    .album-message {
+      max-width: 520px;
+      display: grid;
+      justify-items: center;
+      gap: 14px;
+      text-align: center;
+    }
+    .album-message__art {
+      width: min(360px, 80vw);
+      max-height: calc(var(--album-stage-h) - 220px);
+      object-fit: cover;
+      border-radius: var(--radius);
+      box-shadow: 0 18px 50px rgba(26, 26, 26, 0.12);
+    }
+    .album-message__art--logo { width: 88px; height: 88px; box-shadow: none; border-radius: 20px; }
+    .album-message__title {
+      margin: 6px 0 0;
+      font: 800 clamp(24px, 3vw, 34px)/1.1 var(--font-display);
+      letter-spacing: -0.02em;
+    }
+    .album-message__text { margin: 0; color: var(--color-text-light); }
+    .album-message .btn { margin-top: 6px; }
+
+    .album-spinner {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      border: 3px solid rgba(255, 44, 104, 0.25);
+      border-top-color: var(--color-pink);
+      animation: album-spin 0.9s linear infinite;
+    }
+    @keyframes album-spin { to { transform: rotate(360deg); } }
+
+    .album-skeleton {
+      width: min(380px, 70vw);
+      aspect-ratio: 2 / 3;
+      max-height: calc(var(--album-stage-h) - 48px);
+      border-radius: var(--radius);
+      background: linear-gradient(100deg, #e9e9e9 30%, #f7f7f7 50%, #e9e9e9 70%);
+      background-size: 300% 100%;
+      animation: album-shimmer 1.4s ease-in-out infinite;
+    }
+    @keyframes album-shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+
+    /* ---------- Thumbnails ---------- */
+    .album-strip { padding: 18px var(--gutter) 6px; }
+    .album-thumbs {
+      display: flex;
+      gap: 12px;
+      width: max-content;
+      max-width: 100%;
+      margin: 0 auto;
+      padding: 4px;
+      overflow-x: auto;
+      scroll-behavior: smooth;
+      scrollbar-width: thin;
+      list-style: none;
+    }
+    .album-thumb {
+      position: relative;
+      flex: 0 0 auto;
+      width: var(--album-thumb);
+      height: var(--album-thumb);
+      padding: 0;
+      border: 2px solid transparent;
+      border-radius: 12px;
+      background: var(--color-stone);
+      overflow: hidden;
+      cursor: pointer;
+      transition: border-color var(--transition-speed), transform var(--transition-speed);
+    }
+    .album-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .album-thumb[aria-current="true"] { border-color: var(--color-pink); transform: translateY(-2px); }
+    .album-thumb__badge {
+      position: absolute;
+      right: 4px;
+      bottom: 4px;
+      z-index: 1;
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 6px;
+      border-radius: 999px;
+      background: rgba(26, 26, 26, 0.85);
+      color: #fff;
+      font: 700 10px/1.2 var(--font-sans);
+      letter-spacing: 0.02em;
+    }
+    .album-thumb--pending {
+      display: grid;
+      place-items: center;
+      background: var(--color-blush);
+      color: var(--color-text-soft);
+      font: 600 11px/1.2 var(--font-sans);
+    }
+    .album-thumb--pending::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, 0.6) 50%, transparent 70%);
+      background-size: 300% 100%;
+      animation: album-shimmer 1.4s ease-in-out infinite;
+    }
+    .album-progress {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 8px;
+      margin: 12px 0 0;
+      color: var(--color-text-light);
+      font-size: 14px;
+    }
+    .album-progress__dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--color-pink);
+      animation: album-pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes album-pulse { 50% { opacity: 0.25; } }
+
+    .album-notice {
+      max-width: 720px;
+      margin: 14px auto 0;
+      padding: 12px 18px;
+      border-radius: var(--radius);
+      background: var(--color-blush);
+      text-align: center;
+      font-size: 15px;
+    }
+    .album-notice a { font-weight: 700; color: var(--color-text); }
+
+    /* ---------- Event card + footer ---------- */
+    .album-event {
+      width: min(960px, calc(100% - 2 * var(--gutter)));
+      margin: 28px auto 0;
+      display: grid;
+      grid-template-columns: minmax(0, 280px) 1fr;
+      gap: 28px;
+      align-items: center;
+      padding: 24px;
+      border: 1px solid var(--color-border);
+      border-radius: calc(var(--radius) + 6px);
+    }
+    .album-event--no-banner { grid-template-columns: 1fr; }
+    .album-event__banner { width: 100%; border-radius: var(--radius); display: block; }
+    .album-event__name { margin: 0; font: 800 26px/1.15 var(--font-display); letter-spacing: -0.02em; }
+    .album-event__desc { margin: 8px 0 0; color: var(--color-text-light); }
+    .album-event__expiry { margin: 12px 0 18px; font-size: 14px; color: var(--color-text-light); }
+    .album-footer {
+      margin-top: 32px;
+      padding: 22px var(--gutter) 28px;
+      text-align: center;
+      font-size: 14px;
+      color: var(--color-text-light);
+    }
+    .album-footer a { color: var(--color-text); font-weight: 600; }
+
+    .album-toast {
+      position: fixed;
+      left: 50%;
+      bottom: 24px;
+      z-index: 30;
+      transform: translate(-50%, 20px);
+      padding: 12px 20px;
+      border-radius: 999px;
+      background: var(--color-text);
+      color: #fff;
+      font-weight: 600;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s, transform 0.2s;
+    }
+    .album-toast.is-visible { opacity: 1; transform: translate(-50%, 0); }
+
+    /* State switches: the main element carries data-state. */
+    .album-main:not([data-state="partial"]):not([data-state="complete"]) .album-photo,
+    .album-main:not([data-state="partial"]):not([data-state="complete"]) .album-nav { display: none; }
+    .album-main[data-state="loading"] .album-strip,
+    .album-main[data-state="not_found"] .album-strip,
+    .album-main[data-state="expired"] .album-strip,
+    .album-main[data-state="error"] .album-strip,
+    .album-main[data-state="not_found"] .album-event,
+    .album-main[data-state="error"] .album-event,
+    .album-main[data-state="loading"] .album-event { display: none; }
+
+    @media (max-width: 960px) {
+      :root { --album-bar: 56px; --album-stage-h: min(66vh, 640px); --album-thumb: 64px; }
+      .album-bar { gap: 10px; }
+      .album-bar__brand span, .album-bar__sep { display: none; }
+      .album-bar__title { font-size: 16px; }
+      .album-stage { padding: 12px; }
+      .album-nav { display: none !important; }
+      .album-event { grid-template-columns: 1fr; gap: 16px; padding: 18px; }
+      .album-event__name { font-size: 22px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .album-photo img, .album-thumbs, .album-toast, .album-play { transition: none; scroll-behavior: auto; }
+      .album-spinner, .album-skeleton, .album-thumb--pending::before, .album-progress__dot { animation: none; }
+    }
+  </style>
+</head>
+<body>
+  <header class="album-bar">
+    <a href="/" class="album-bar__brand" aria-label="Happy Booth — trang chủ">
+      <img src="/assets/icons/logo.svg" alt="" width="32" height="32">
+      <span>Happy Booth</span>
+    </a>
+    <span class="album-bar__sep" aria-hidden="true">/</span>
+    <h1 class="album-bar__title" data-album-title>Ảnh của bạn</h1>
+    <div class="album-bar__actions">
+      <button type="button" class="album-icon-btn" data-album-download aria-label="Tải file gốc" disabled>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+      </button>
+      <button type="button" class="album-icon-btn" data-album-share aria-label="Chia sẻ link album">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4"/><path d="m15.4 6.5-6.8 4"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="album-main" id="album" data-state="loading">
+    <section class="album-stage" data-album-stage aria-label="Ảnh đang xem">
+      <button type="button" class="album-nav album-nav--prev" data-album-prev aria-label="Ảnh trước">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+      </button>
+
+      <div class="album-photo" data-album-photo>
+        <img data-album-image alt="" decoding="async">
+        <video data-album-video playsinline preload="none" hidden></video>
+        <button type="button" class="album-play" data-album-play aria-label="Phát video" hidden>
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l12.5-7.5z"/></svg>
+        </button>
+        <p class="album-video-error" data-album-video-error hidden>Trình duyệt không phát được video này. Bấm nút tải để xem trên máy.</p>
+        <span class="album-counter" data-album-counter aria-live="polite"></span>
+      </div>
+
+      <div class="album-message" data-album-message>
+        <div class="album-skeleton" aria-hidden="true"></div>
+      </div>
+
+      <button type="button" class="album-nav album-nav--next" data-album-next aria-label="Ảnh sau">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+      </button>
+    </section>
+
+    <section class="album-strip" aria-label="Danh sách ảnh">
+      <ul class="album-thumbs" data-album-thumbs></ul>
+      <p class="album-progress" data-album-progress aria-live="polite"></p>
+      <p class="album-notice" data-album-notice hidden></p>
+    </section>
+
+    <section class="album-event" data-album-event>
+      <img class="album-event__banner" data-album-banner alt="" hidden>
+      <div>
+        <h2 class="album-event__name" data-album-event-name></h2>
+        <p class="album-event__desc" data-album-event-desc hidden></p>
+        <p class="album-event__expiry" data-album-expiry></p>
+        <a href="/price" class="btn btn--pink">Thuê photobooth cho sự kiện của bạn</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="album-footer">
+    © Happy Booth · Hotline <a href="tel:+84971842329">0971 842 329</a> · <a href="/">happybooth.vn</a>
+  </footer>
+
+  <div class="album-toast" data-album-toast role="status" aria-live="polite"></div>
+
+  <script src="/assets/js/album-core.js"></script>
+  <script src="/assets/js/album.js" defer></script>
+</body>
+</html>
