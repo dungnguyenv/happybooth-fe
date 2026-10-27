@@ -40,8 +40,6 @@ function reinitPage() {
   initPortfolioLoadMore();
   initFAQ();
   initCarousel();
-  initLoginForm();
-  initAdminPage();
 }
 
 function cleanup() {
@@ -730,82 +728,6 @@ function handleSubmit(e) {
   alert(msg);
   e.target.reset();
   return false;
-}
-
-/* ----------------------------------------
-   Login Form
-   ---------------------------------------- */
-function initLoginForm() {
-  var form = document.getElementById('loginForm');
-  if (!form) return;
-
-  form.addEventListener('submit', function (e) {
-    e.preventDefault();
-    var email = document.getElementById('loginEmail').value.trim();
-    var password = document.getElementById('loginPassword').value;
-    var errorEl = document.getElementById('loginError');
-
-    errorEl.style.display = 'none';
-    errorEl.textContent = '';
-
-    if (!email || !password) {
-      showLoginError(errorEl, 'auth.error.emptyFields', 'Please enter email and password.');
-      return;
-    }
-
-    var btn = form.querySelector('button[type="submit"]');
-    btn.disabled = true;
-    btn.textContent = '...';
-
-    window.auth.login(email, password).then(function () {
-      window.location.href = '/admin';
-    }).catch(function (err) {
-      btn.disabled = false;
-      btn.textContent = (window.i18n && window.i18n.t('auth.login.submit')) || 'Sign In';
-
-      var msgKey = 'auth.error.generic';
-      if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' ||
-          err.code === 'auth/invalid-credential') {
-        msgKey = 'auth.error.invalidCredentials';
-      } else if (err.code === 'auth/too-many-requests') {
-        msgKey = 'auth.error.tooManyRequests';
-      } else if (err.code === 'auth/invalid-email') {
-        msgKey = 'auth.error.invalidEmail';
-      }
-      showLoginError(errorEl, msgKey, getDefaultErrorMessage(err.code));
-    });
-  });
-}
-
-function showLoginError(el, i18nKey, fallback) {
-  var msg = (window.i18n && window.i18n.t(i18nKey)) || fallback;
-  el.textContent = msg;
-  el.style.display = 'block';
-}
-
-function getDefaultErrorMessage(code) {
-  var map = {
-    'auth/invalid-credential': 'Invalid email or password.',
-    'auth/user-not-found': 'Invalid email or password.',
-    'auth/wrong-password': 'Invalid email or password.',
-    'auth/too-many-requests': 'Too many attempts. Please try again later.',
-    'auth/invalid-email': 'Please enter a valid email address.'
-  };
-  return map[code] || 'An error occurred. Please try again.';
-}
-
-/* ----------------------------------------
-   Admin Page
-   ---------------------------------------- */
-function initAdminPage() {
-  var logoutBtn = document.getElementById('logoutBtn');
-  if (!logoutBtn) return;
-
-  logoutBtn.addEventListener('click', function () {
-    window.auth.logout().then(function () {
-      window.location.href = '/login';
-    });
-  });
 }
 
 /* Sharing is delegated so it works after SPA navigation too. */

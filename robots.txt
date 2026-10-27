@@ -1,7 +1,5 @@
 User-agent: *
 Allow: /
-Disallow: /admin
-Disallow: /login
 Disallow: /album
 
 Sitemap: https://happybooth.vn/sitemap.xml

@@ -40,17 +40,6 @@
         pageCache[href] = snapshot(document, main);
       }
 
-      // Auth guard for direct page load
-      if (window.auth && (currentPage === 'admin' || currentPage === 'login')) {
-        window.auth.whenReady().then(function (user) {
-          if (currentPage === 'admin' && !user) {
-            window.location.replace('/login');
-          } else if (currentPage === 'login' && user) {
-            window.location.replace('/admin');
-          }
-        });
-      }
-
       // Static HTML is already visible. Only SPA navigation adds page-enter.
     }
 
@@ -63,7 +52,7 @@
   var pagePaths = {
     home: '/', about: '/about', portfolio: '/portfolio',
     frame: '/frame', price: '/price',
-    contact: '/contact', login: '/login', admin: '/admin',
+    contact: '/contact',
     'du-an-note-group': '/du-an-note-group',
     'du-an-20-10': '/du-an-20-10',
     'thue-photobooth-su-kien-ha-noi': '/thue-photobooth-su-kien-ha-noi'
@@ -123,15 +112,6 @@
 
     if (window.i18n && window.i18n.ready) await window.i18n.ready;
     if (requestId !== navigationId) return;
-
-    // Auth guard
-    if (window.auth && (targetPage === 'admin' || targetPage === 'login')) {
-      await window.auth.whenReady();
-      if (requestId !== navigationId) return;
-      var guard = window.auth.guardRoute(targetPage);
-      if (guard === 'redirect-login') { navigateTo('/login', true); return; }
-      if (guard === 'redirect-admin') { navigateTo('/admin', true); return; }
-    }
 
     // Close mobile nav if open
     var hamburger = document.querySelector('.hamburger');
