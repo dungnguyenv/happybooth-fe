@@ -1380,7 +1380,8 @@ body:has(.frame-modal[open]) { overflow: hidden; }
 }
 
 .pricing__grid--basic,
-.pricing__grid--daily {
+.pricing__grid--daily,
+.pricing__grid--other {
   grid-template-columns: repeat(3, 1fr);
 }
 
@@ -2250,7 +2251,8 @@ html.i18n-ready body {
   }
 
   .pricing__grid--basic,
-  .pricing__grid--daily {
+  .pricing__grid--daily,
+  .pricing__grid--other {
     grid-template-columns: repeat(2, 1fr);
   }
 }
@@ -2466,7 +2468,8 @@ html.i18n-ready body {
   .pricing__card--wide .pricing__features { grid-template-columns: minmax(0, 1fr); }
   .pricing__grid--basic,
   .pricing__grid--premium,
-  .pricing__grid--daily {
+  .pricing__grid--daily,
+  .pricing__grid--other {
     grid-template-columns: 1fr;
   }
 
