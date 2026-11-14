@@ -27,6 +27,16 @@
     year: 'numeric'
   });
 
+  // ---- Partner branding (GET /public/albums/{code}/page) ----
+  var PAGE_FETCH_TIMEOUT_MS = 3000;
+  var THEMES = ['light', 'dark', 'minimal', 'vivid'];
+  var SOCIAL_KINDS = ['facebook', 'instagram', 'tiktok', 'zalo', 'youtube'];
+  var COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
+  var ADMIN_ORIGIN = 'https://admin.happybooth.vn';
+  var LOCAL_ORIGIN_RE = /^http:\/\/(localhost|127\.0\.0\.1)(:\d{1,5})?$/;
+  // Bar background of the themes that do not use the partner colour for it.
+  var THEME_COLOR = { dark: '#141414', minimal: '#FBFAF7' };
+
   function readCode(search) {
     var raw = new URLSearchParams(search || '').get('c');
     var code = (raw || '').trim().toLowerCase();
@@ -194,6 +204,159 @@
     return 'ảnh';
   }
 
+  // ---------- Partner branding ----------
+
+  function channel(v) {
+    v /= 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  }
+
+  function luminance(hex) {
+    if (typeof hex !== 'string' || !COLOR_RE.test(hex)) return null;
+    return 0.2126 * channel(parseInt(hex.slice(1, 3), 16)) +
+      0.7152 * channel(parseInt(hex.slice(3, 5), 16)) +
+      0.0722 * channel(parseInt(hex.slice(5, 7), 16));
+  }
+
+  // WCAG contrast ratio of two #RRGGBB colours (1 when either is not one).
+  function contrastRatio(a, b) {
+    var la = luminance(a);
+    var lb = luminance(b);
+    if (la === null || lb === null) return 1;
+    return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+  }
+
+  // Text colour on top of `hex`: the one of black and white that reads better.
+  function inkFor(hex) {
+    return contrastRatio(hex, '#000000') > contrastRatio(hex, '#FFFFFF') ? '#000000' : '#FFFFFF';
+  }
+
+  function carouselIndex(i, delta, n) {
+    return n > 0 ? wrapIndex(i + delta, n) : 0;
+  }
+
+  // The admin editor (and, locally, its dev server) may drive the preview page.
+  function previewOriginAllowed(origin, hostname) {
+    if (origin === ADMIN_ORIGIN) return true;
+    var local = hostname === 'localhost' || hostname === '127.0.0.1';
+    return local && LOCAL_ORIGIN_RE.test(String(origin));
+  }
+
+  // tel: link built from the hotline's digits (and a leading +) only.
+  function telHref(hotline) {
+    var raw = String(hotline || '').trim();
+    var digits = raw.replace(/\D/g, '');
+    return digits ? 'tel:' + (raw.charAt(0) === '+' ? '+' : '') + digits : '';
+  }
+
+  // Preview only: the admin hands over partner URLs as they are; they are
+  // shown, never followed (the page turns every click into a toast).
+  function previewUrl(url) {
+    try {
+      var parsed = new URL(url);
+      return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? parsed.href : '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function pageUrl(url, opts) {
+    return opts.preview ? previewUrl(url) : apiUrl(url, opts.base);
+  }
+
+  function clean(value, max) {
+    return typeof value === 'string' ? value.trim().slice(0, max) : '';
+  }
+
+  function listOf(value) {
+    if (value === undefined || value === null) return [];
+    return Array.isArray(value) ? value : null;
+  }
+
+  // GET /page body -> what to draw, or null (HappyBooth default: `default`, malformed).
+  // opts: { base } the API origin links and images must stay on, or { preview: true }.
+  function pageView(body, opts) {
+    opts = opts || {};
+    if (!body || typeof body !== 'object' || body.mode !== 'brand') return null;
+    if (THEMES.indexOf(body.theme) < 0) return null;
+    if (typeof body.color !== 'string' || !COLOR_RE.test(body.color)) return null;
+    var orgName = clean(body.org_name, 120);
+    if (!orgName) return null;
+    var banners = listOf(body.banners);
+    var social = listOf(body.social);
+    var sponsors = listOf(body.sponsors);
+    if (banners === null || social === null || sponsors === null) return null;
+    var contact = body.contact && typeof body.contact === 'object' ? body.contact : {};
+
+    function pick(u) { return u ? pageUrl(String(u), opts) : ''; }
+
+    var view = {
+      orgName: orgName,
+      poweredBy: body.powered_by !== false,
+      theme: body.theme,
+      color: body.color.toUpperCase(),
+      ink: inkFor(body.color),
+      logoUrl: pick(body.logo_url),
+      banners: [],
+      cta: null,
+      hotline: clean(contact.hotline, 20),
+      hotlineHref: '',
+      website: null,
+      social: [],
+      sponsors: []
+    };
+    view.hotlineHref = telHref(view.hotline);
+    if (!view.hotlineHref) view.hotline = '';
+
+    banners.forEach(function (b) {
+      var image = pick(b && b.image_url);
+      var href = pick(b && b.href);
+      if (image && href) view.banners.push({ imageUrl: image, alt: clean(b.alt, 120), href: href });
+    });
+
+    var cta = body.cta;
+    if (cta && typeof cta === 'object') {
+      var ctaHref = pick(cta.href);
+      var label = clean(cta.label, 40);
+      if (ctaHref && label) view.cta = { label: label, href: ctaHref };
+    }
+
+    var siteHref = pick(contact.website_href);
+    var siteLabel = clean(contact.website_label, 120);
+    if (siteHref && siteLabel) view.website = { label: siteLabel, href: siteHref };
+
+    var seen = {};
+    social.forEach(function (s) {
+      var kind = s && s.kind;
+      var href = pick(s && s.href);
+      if (SOCIAL_KINDS.indexOf(kind) >= 0 && !seen[kind] && href) {
+        seen[kind] = true;
+        view.social.push({ kind: kind, href: href });
+      }
+    });
+
+    sponsors.forEach(function (sp) {
+      var name = clean(sp && sp.name, 60);
+      var logo = pick(sp && sp.logo_url);
+      var hasHref = sp && sp.href !== null && sp.href !== undefined && sp.href !== '';
+      var href = hasHref ? pick(sp.href) : '';
+      if (name && logo && (!hasHref || href)) view.sponsors.push({ name: name, logoUrl: logo, href: href });
+    });
+    return view;
+  }
+
+  // document.title: a white-label page carries the partner's name only.
+  function pageTitle(eventName, view) {
+    if (view && !view.poweredBy) return (eventName || 'Ảnh của bạn') + ' — ' + view.orgName;
+    return (eventName ? eventName + ' — ' : '') + 'Ảnh của bạn — Happy Booth';
+  }
+
+  // <meta name="theme-color">: the colour of the bar the browser UI sits on.
+  function themeColor(view) {
+    if (!view) return '#FFFFFF';
+    return THEME_COLOR[view.theme] || view.color;
+  }
+
   return {
     SHORT_PATH_RE: SHORT_PATH_RE,
     readCode: readCode,
@@ -210,6 +373,16 @@
     formatDate: formatDate,
     fileKind: fileKind,
     albumNoun: albumNoun,
-    videoErrorRetryable: videoErrorRetryable
+    videoErrorRetryable: videoErrorRetryable,
+    pageFetchTimeoutMs: PAGE_FETCH_TIMEOUT_MS,
+    inkFor: inkFor,
+    contrastRatio: contrastRatio,
+    carouselIndex: carouselIndex,
+    previewOriginAllowed: previewOriginAllowed,
+    telHref: telHref,
+    previewUrl: previewUrl,
+    pageView: pageView,
+    pageTitle: pageTitle,
+    themeColor: themeColor
   };
 });

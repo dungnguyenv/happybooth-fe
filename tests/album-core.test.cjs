@@ -216,3 +216,199 @@ test('videoErrorRetryable: a dropped connection is worth another tap, a codec is
   assert.equal(core.videoErrorRetryable(4), false); // MEDIA_ERR_SRC_NOT_SUPPORTED
   assert.equal(core.videoErrorRetryable(undefined), false);
 });
+
+// ---- Partner branding ----
+
+const API = 'http://localhost:8010';
+const go = (id) => API + '/public/albums/k7m2x9qa4n/go/' + id;
+const asset = (id) => API + '/public/page-assets/' + id + '.webp?v=1';
+
+function brandBody(extra) {
+  return Object.assign({
+    mode: 'brand',
+    org_name: 'Lumi Coffee',
+    powered_by: true,
+    theme: 'light',
+    color: '#7a3e1d',
+    logo_url: asset('logo'),
+    banners: [{ image_url: asset('b1'), alt: 'Giảm 20%', href: go('k3m9x2pq') }],
+    cta: { label: 'Xem menu & đặt bàn', href: go('cta') },
+    contact: { hotline: '0909 000 000', website_label: 'lumicoffee.vn', website_href: go('website') },
+    social: [{ kind: 'facebook', href: go('facebook') }],
+    sponsors: [{ name: 'Sóng Audio', logo_url: asset('s1'), href: go('a8b2c3d4') }]
+  }, extra || {});
+}
+
+test('inkFor picks the text colour with the higher contrast', () => {
+  assert.equal(core.inkFor('#7A3E1D'), '#FFFFFF');
+  assert.equal(core.inkFor('#F5D547'), '#000000');
+  assert.equal(core.inkFor('#000000'), '#FFFFFF');
+  assert.equal(core.inkFor('#FFFFFF'), '#000000');
+  assert.equal(core.inkFor('#CB1048'), '#FFFFFF');
+});
+
+test('contrastRatio follows WCAG', () => {
+  assert.equal(core.contrastRatio('#000000', '#FFFFFF'), 21);
+  assert.equal(core.contrastRatio('#FFFFFF', '#000000'), 21);
+  assert.equal(core.contrastRatio('#7A3E1D', '#7A3E1D'), 1);
+  assert.ok(Math.abs(core.contrastRatio('#777777', '#FFFFFF') - 4.48) < 0.02);
+  assert.equal(core.contrastRatio('nope', '#FFFFFF'), 1);
+});
+
+test('carouselIndex wraps in both directions', () => {
+  assert.equal(core.carouselIndex(0, 1, 3), 1);
+  assert.equal(core.carouselIndex(2, 1, 3), 0);
+  assert.equal(core.carouselIndex(0, -1, 3), 2);
+  assert.equal(core.carouselIndex(0, 1, 1), 0);
+  assert.equal(core.carouselIndex(0, 1, 0), 0);
+});
+
+test('previewOriginAllowed: the admin, or a local origin when the site itself is local', () => {
+  assert.equal(core.previewOriginAllowed('https://admin.happybooth.vn', 'happybooth.vn'), true);
+  assert.equal(core.previewOriginAllowed('https://admin.happybooth.vn', 'localhost'), true);
+  assert.equal(core.previewOriginAllowed('http://localhost:5173', 'happybooth.vn'), false);
+  assert.equal(core.previewOriginAllowed('http://localhost:5173', 'localhost'), true);
+  assert.equal(core.previewOriginAllowed('http://127.0.0.1:5173', '127.0.0.1'), true);
+  assert.equal(core.previewOriginAllowed('https://evil.example', 'localhost'), false);
+  assert.equal(core.previewOriginAllowed('http://localhost.evil.example', 'localhost'), false);
+  assert.equal(core.previewOriginAllowed('http://localhost:5173@evil.example', 'localhost'), false);
+  assert.equal(core.previewOriginAllowed('https://localhost:5173', 'localhost'), false);
+  assert.equal(core.previewOriginAllowed('https://admin.happybooth.vn.evil.example', 'happybooth.vn'), false);
+  assert.equal(core.previewOriginAllowed(undefined, 'localhost'), false);
+});
+
+test('the /page fetch gives up after 3 seconds', () => {
+  assert.equal(core.pageFetchTimeoutMs, 3000);
+});
+
+test('pageView: default, malformed and unknown bodies mean the HappyBooth page', () => {
+  const opts = { base: API };
+  assert.equal(core.pageView({ mode: 'default' }, opts), null);
+  assert.equal(core.pageView(null, opts), null);
+  assert.equal(core.pageView('brand', opts), null);
+  assert.equal(core.pageView({}, opts), null);
+  assert.equal(core.pageView({ mode: 'brand' }, opts), null);
+  assert.equal(core.pageView(brandBody({ theme: 'neon' }), opts), null);
+  assert.equal(core.pageView(brandBody({ color: 'red' }), opts), null);
+  assert.equal(core.pageView(brandBody({ color: '#FFF' }), opts), null);
+  assert.equal(core.pageView(brandBody({ org_name: '  ' }), opts), null);
+  assert.equal(core.pageView(brandBody({ banners: 'many' }), opts), null);
+  assert.equal(core.pageView(brandBody({ sponsors: {} }), opts), null);
+});
+
+test('pageView turns a C2 body into what to draw', () => {
+  const v = core.pageView(brandBody(), { base: API });
+  assert.equal(v.orgName, 'Lumi Coffee');
+  assert.equal(v.poweredBy, true);
+  assert.equal(v.theme, 'light');
+  assert.equal(v.color, '#7A3E1D');
+  assert.equal(v.ink, '#FFFFFF');
+  assert.equal(v.logoUrl, asset('logo'));
+  assert.deepEqual(v.banners, [{ imageUrl: asset('b1'), alt: 'Giảm 20%', href: go('k3m9x2pq') }]);
+  assert.deepEqual(v.cta, { label: 'Xem menu & đặt bàn', href: go('cta') });
+  assert.equal(v.hotline, '0909 000 000');
+  assert.equal(v.hotlineHref, 'tel:0909000000');
+  assert.deepEqual(v.website, { label: 'lumicoffee.vn', href: go('website') });
+  assert.deepEqual(v.social, [{ kind: 'facebook', href: go('facebook') }]);
+  assert.deepEqual(v.sponsors, [{ name: 'Sóng Audio', logoUrl: asset('s1'), href: go('a8b2c3d4') }]);
+});
+
+test('pageView copes with empty blocks and a white-label page', () => {
+  const v = core.pageView({
+    mode: 'brand', org_name: 'Lumi', powered_by: false, theme: 'vivid', color: '#F5D547', logo_url: null,
+    banners: [], cta: null, contact: { hotline: null, website_label: null, website_href: null }, social: [], sponsors: []
+  }, { base: API });
+  assert.equal(v.poweredBy, false);
+  assert.equal(v.ink, '#000000');
+  assert.equal(v.logoUrl, '');
+  assert.equal(v.cta, null);
+  assert.equal(v.hotline, '');
+  assert.equal(v.hotlineHref, '');
+  assert.equal(v.website, null);
+  assert.deepEqual([v.banners, v.social, v.sponsors], [[], [], []]);
+});
+
+test('pageView drops items whose URLs leave the API (but keeps a sponsor without a link)', () => {
+  const evil = 'https://evil.example/x';
+  const v = core.pageView(brandBody({
+    logo_url: evil,
+    banners: [
+      { image_url: asset('b1'), alt: 'ok', href: go('aaaaaaaa') },
+      { image_url: evil, alt: 'bad image', href: go('bbbbbbbb') },
+      { image_url: asset('b3'), alt: 'bad link', href: evil },
+      { image_url: asset('b4'), alt: 'js', href: 'javascript:alert(1)' }
+    ],
+    cta: { label: 'Go', href: evil },
+    contact: { hotline: '0909', website_label: 'x.vn', website_href: evil },
+    social: [{ kind: 'facebook', href: evil }, { kind: 'zalo', href: go('zalo') }, { kind: 'myspace', href: go('myspace') }, { kind: 'zalo', href: go('zalo') }],
+    sponsors: [
+      { name: 'A', logo_url: asset('s1'), href: null },
+      { name: 'B', logo_url: asset('s2'), href: evil },
+      { name: 'C', logo_url: evil, href: null }
+    ]
+  }), { base: API });
+  assert.equal(v.logoUrl, '');
+  assert.deepEqual(v.banners.map((b) => b.alt), ['ok']);
+  assert.equal(v.cta, null);
+  assert.equal(v.website, null);
+  assert.deepEqual(v.social, [{ kind: 'zalo', href: go('zalo') }]);
+  assert.deepEqual(v.sponsors, [{ name: 'A', logoUrl: asset('s1'), href: '' }]);
+});
+
+test('pageView in preview mode keeps partner URLs as given, http(s) only', () => {
+  const v = core.pageView(brandBody({
+    logo_url: API + '/img/logo.webp',
+    banners: [
+      { image_url: API + '/img/b.webp', alt: 'a', href: 'https://lumicoffee.vn/khuyen-mai' },
+      { image_url: API + '/img/b.webp', alt: 'js', href: 'javascript:alert(1)' }
+    ],
+    cta: { label: 'Go', href: 'https://lumicoffee.vn/menu' },
+    contact: { hotline: '0909 000 000', website_label: 'lumicoffee.vn', website_href: 'https://lumicoffee.vn' },
+    social: [{ kind: 'facebook', href: 'https://facebook.com/lumi' }],
+    sponsors: [{ name: 'A', logo_url: API + '/img/s.webp', href: 'https://a.example' }]
+  }), { preview: true });
+  assert.equal(v.logoUrl, API + '/img/logo.webp');
+  assert.deepEqual(v.banners.map((b) => b.href), ['https://lumicoffee.vn/khuyen-mai']);
+  assert.equal(v.cta.href, 'https://lumicoffee.vn/menu');
+  assert.equal(v.website.href, 'https://lumicoffee.vn/');
+  assert.equal(v.social[0].href, 'https://facebook.com/lumi');
+  assert.equal(v.sponsors[0].href, 'https://a.example/');
+});
+
+test('partner text is passed through as plain strings, trimmed to the limits', () => {
+  const v = core.pageView(brandBody({
+    org_name: '<img src=x onerror=alert(1)>',
+    banners: [{ image_url: asset('b1'), alt: '<script>alert(2)</script>' + 'x'.repeat(200), href: go('aaaaaaaa') }],
+    cta: { label: '<b>hi</b>'.repeat(20), href: go('cta') }
+  }), { base: API });
+  assert.equal(v.orgName, '<img src=x onerror=alert(1)>');
+  assert.equal(v.banners[0].alt.length, 120);
+  assert.equal(v.cta.label.length, 40);
+});
+
+test('telHref keeps digits and a leading plus only', () => {
+  assert.equal(core.telHref('0909 000 000'), 'tel:0909000000');
+  assert.equal(core.telHref('+84 909.000-000'), 'tel:+84909000000');
+  assert.equal(core.telHref('0909;rm -rf'), 'tel:0909');
+  assert.equal(core.telHref('hotline'), '');
+  assert.equal(core.telHref(null), '');
+});
+
+test('pageTitle: only a white-label page drops the HappyBooth name', () => {
+  const brand = core.pageView(brandBody(), { base: API });
+  const white = core.pageView(brandBody({ powered_by: false }), { base: API });
+  assert.equal(core.pageTitle('Tiệc', null), 'Tiệc — Ảnh của bạn — Happy Booth');
+  assert.equal(core.pageTitle(undefined, null), 'Ảnh của bạn — Happy Booth');
+  assert.equal(core.pageTitle('Tiệc', brand), 'Tiệc — Ảnh của bạn — Happy Booth');
+  assert.equal(core.pageTitle('Tiệc', white), 'Tiệc — Lumi Coffee');
+  assert.equal(core.pageTitle('', white), 'Ảnh của bạn — Lumi Coffee');
+});
+
+test('themeColor follows the bar the browser UI sits on', () => {
+  const v = (theme) => core.pageView(brandBody({ theme }), { base: API });
+  assert.equal(core.themeColor(null), '#FFFFFF');
+  assert.equal(core.themeColor(v('light')), '#7A3E1D');
+  assert.equal(core.themeColor(v('vivid')), '#7A3E1D');
+  assert.equal(core.themeColor(v('dark')), '#141414');
+  assert.equal(core.themeColor(v('minimal')), '#FBFAF7');
+});
