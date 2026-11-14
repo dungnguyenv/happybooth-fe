@@ -39,3 +39,13 @@ test('partner text never goes through innerHTML', () => {
     assert.ok(!/page\.|\.orgName|\.label|\.alt|\.hotline/.test(rhs), 'partner field written as HTML: ' + rhs);
   }
 });
+
+test('the preview photos are bundled WebP files', () => {
+  for (const n of [1, 2, 3]) {
+    const file = path.join(root, 'assets/images/preview/sample-' + n + '.webp');
+    const head = fs.readFileSync(file).subarray(0, 12);
+    assert.equal(head.subarray(0, 4).toString(), 'RIFF', file);
+    assert.equal(head.subarray(8, 12).toString(), 'WEBP', file);
+    assert.ok(fs.statSync(file).size < 60 * 1024, file + ' is larger than it needs to be');
+  }
+});

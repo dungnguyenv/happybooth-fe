@@ -601,6 +601,7 @@ permalink: /album.html
 
     html[data-theme="vivid"] {
       --color-text: var(--brand-ink);
+      --color-text-soft: var(--brand-ink);
       --color-text-light: color-mix(in srgb, var(--brand-ink) 84%, transparent);
       --color-border: color-mix(in srgb, var(--brand-ink) 35%, transparent);
       --color-stone: transparent;
@@ -662,6 +663,7 @@ permalink: /album.html
       transition: opacity 0.2s, transform 0.2s;
     }
     .album-toast.is-visible { opacity: 1; transform: translate(-50%, 0); }
+    .album-toast.is-url { max-width: calc(100vw - 32px); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 
     /* State switches: the main element carries data-state. */
     .album-main:not([data-state="partial"]):not([data-state="complete"]) .album-photo,

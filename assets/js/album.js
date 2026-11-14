@@ -10,6 +10,7 @@
    an error or the timeout draw the HappyBooth page, and a late answer is
    ignored. Photos never wait for it. Partner text only goes in with
    textContent, partner links and images only via the API-origin guard.
+   /album?preview=1 draws the same page from postMessage drafts (the admin editor).
    ======================================== */
 
 (function () {
@@ -87,6 +88,7 @@
   var touchY = null;
   var wantedSrc = '';      // the preview the stage should end up showing
   var followThumb = true;  // scroll the strip to the selected thumb on the next render
+  var preview = false;     // /album?preview=1: drafts from the admin editor, no API
   var brandState = 'pending';  // 'pending' until /page answers, then 'default' or 'brand'
   var page = null;         // HBAlbumCore.pageView, when brandState is 'brand'
   var brandTimer = null;
@@ -95,10 +97,16 @@
 
   function init() {
     api = core.apiBase(window.location.hostname);
+    preview = new URLSearchParams(window.location.search).get('preview') === '1';
     fallback.bar = els.brandLink.innerHTML;
     fallback.barLabel = els.brandLink.getAttribute('aria-label');
     fallback.footer = els.footer.innerHTML;
     fallback.cta = els.cta.textContent;
+    if (preview) {
+      bindViewer();
+      initPreview();
+      return;
+    }
     code = core.readCode(window.location.search);
     if (!code) {
       apply({ kind: 'not_found', album: null, stale: false, offline: false });
@@ -599,6 +607,10 @@
   }
 
   function onDownload() {
+    if (preview) {
+      toast('Xem trước: nút tải ảnh');
+      return;
+    }
     if (core.isExpired(view && view.album, Date.now())) {
       refresh();
       return;
@@ -612,6 +624,10 @@
   }
 
   function onShare() {
+    if (preview) {
+      toast('Xem trước: nút chia sẻ link');
+      return;
+    }
     var url = window.location.origin + '/' + code;
     var title = (view && view.album && view.album.event && view.album.event.name) || 'Ảnh Happy Booth';
     if (navigator.share) {
@@ -628,8 +644,9 @@
     }
   }
 
-  function toast(text) {
+  function toast(text, isUrl) {
     els.toast.textContent = text;
+    els.toast.classList.toggle('is-url', !!isUrl);
     els.toast.classList.add('is-visible');
     clearTimeout(toastTimer);
     toastTimer = setTimeout(function () { els.toast.classList.remove('is-visible'); }, 2400);
@@ -691,10 +708,16 @@
     document.head.appendChild(link);
   }
 
-  // Partner links open in a new tab.
+  // Partner links open in a new tab; in the preview nothing is followed (see onPreviewClick).
   function setLink(a, href, external) {
     a.removeAttribute('target');
     a.removeAttribute('rel');
+    if (preview) {
+      a.setAttribute('href', '#');
+      a.setAttribute('data-preview-url', href);
+      return;
+    }
+    a.removeAttribute('data-preview-url');
     a.setAttribute('href', href);
     if (external) {
       a.setAttribute('target', '_blank');
@@ -717,6 +740,7 @@
       a.setAttribute('href', '/');
       a.removeAttribute('target');
       a.removeAttribute('rel');
+      a.removeAttribute('data-preview-url');
       return;
     }
     a.textContent = '';
@@ -736,6 +760,7 @@
       a.removeAttribute('href');
       a.removeAttribute('target');
       a.removeAttribute('rel');
+      a.removeAttribute('data-preview-url');
     }
   }
 
@@ -776,6 +801,7 @@
       a.setAttribute('href', '/price');
       a.removeAttribute('target');
       a.removeAttribute('rel');
+      a.removeAttribute('data-preview-url');
     } else if (page.cta) {
       a.hidden = false;
       a.textContent = page.cta.label;
@@ -914,6 +940,69 @@
   els.adsFrame.addEventListener('focusin', holdAds);
   els.adsDots.addEventListener('click', onAdsDot);
 
+  /* ---------- Preview (the admin editor's iframe) ---------- */
+
+  var SAMPLES = ['sample-1', 'sample-2', 'sample-3'];
+
+  function initPreview() {
+    window.addEventListener('message', onPreviewMessage);
+    // Nothing leaves the preview: every click on a link says where it would go.
+    document.addEventListener('click', onPreviewClick, true);
+    document.addEventListener('auxclick', onPreviewClick, true);
+    if (window.parent !== window) {
+      window.parent.postMessage({ type: 'hb-preview-ready' }, '*');
+    } else {
+      // Opened on its own: show the plain sample page.
+      setBrand('default', null);
+      apply(previewState('photos', { name: 'Tên sự kiện', description: 'Mô tả sự kiện', banner_url: null }));
+    }
+  }
+
+  function onPreviewMessage(e) {
+    if (e.source !== window.parent || !core.previewOriginAllowed(e.origin, window.location.hostname)) return;
+    var msg = e.data;
+    if (!msg || msg.type !== 'hb-preview') return;
+    var v = core.pageView(msg.page, { preview: true });
+    setBrand(v ? 'brand' : 'default', v);
+    var ev = msg.event && typeof msg.event === 'object' ? msg.event : {};
+    apply(previewState(msg.state, {
+      code: 'preview',
+      name: typeof ev.name === 'string' ? ev.name : '',
+      description: typeof ev.description === 'string' && ev.description ? ev.description : null,
+      banner_url: typeof ev.banner_url === 'string' && ev.banner_url ? ev.banner_url : null
+    }));
+  }
+
+  // 'photos' | 'waiting' | 'expired' -> the state the real page would be in.
+  function previewState(kind, event) {
+    var now = Date.now();
+    if (kind === 'expired') return core.deriveState({ status: 410, body: { status: 'expired', event: event } }, null, now);
+    var uploaded = kind === 'waiting' ? 0 : SAMPLES.length;
+    var files = SAMPLES.map(function (name, i) {
+      var sample = window.location.origin + '/assets/images/preview/' + name + '.webp';
+      var done = i < uploaded;
+      return {
+        name: name + '.webp', kind: 'photo', status: done ? 'uploaded' : 'pending',
+        preview_url: done ? sample : null, media_url: done ? sample : null, download_url: '', width: 600, height: 900
+      };
+    });
+    return core.deriveState({
+      status: 200,
+      body: {
+        code: 'preview', status: 'active', created_at: new Date(now).toISOString(),
+        expires_at: new Date(now + 15 * 24 * 60 * 60 * 1000).toISOString(),
+        event: event, total: SAMPLES.length, uploaded: uploaded, files: files
+      }
+    }, null, now);
+  }
+
+  function onPreviewClick(e) {
+    var a = e.target.closest && e.target.closest('a');
+    if (!a) return;
+    e.preventDefault();
+    toast(a.getAttribute('data-preview-url') || a.href, true);
+  }
+
   /* ---------- Helpers ---------- */
 
   function esc(s) {
@@ -927,7 +1016,7 @@
   }
 
   function url(u) {
-    return core.apiUrl(u, api);
+    return preview ? core.previewUrl(u) : core.apiUrl(u, api);
   }
 
   function node(tag, cls, text, attrs) {
