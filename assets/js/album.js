@@ -3,11 +3,31 @@
    404.html sends short links here as /album?c=<code>; this page restores the
    short URL, reads the album from the API and polls while photos upload.
    An album holds photos, GIFs and MP4 clips (HBAlbumCore.fileKind).
+
+   Partners can brand the page: GET /public/albums/<code>/page runs in parallel
+   with the album and is asked once. Until it answers (3 s at most) everything
+   that depends on the brand stays a neutral block of its final size; `default`,
+   an error or the timeout draw the HappyBooth page, and a late answer is
+   ignored. Photos never wait for it. Partner text only goes in with
+   textContent, partner links and images only via the API-origin guard.
    ======================================== */
 
 (function () {
   var core = window.HBAlbumCore;
   var HOTLINE = '<a href="tel:+84971842329">0971 842 329</a>';
+  var AD_ROTATE_MS = 6000;
+  var SERIF_CSS = 'https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600&display=swap';
+  var SOCIAL_LABEL = { facebook: 'Facebook', instagram: 'Instagram', tiktok: 'TikTok', zalo: 'Zalo', youtube: 'YouTube' };
+  var ICON_ATTRS = 'width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
+  // Fixed markup only: nothing from a partner ever reaches innerHTML.
+  var SOCIAL_ICON = {
+    facebook: '<path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"/>',
+    instagram: '<rect width="20" height="20" x="2" y="2" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><path d="M17.5 6.5h.01"/>',
+    tiktok: '<path d="M9 12a4 4 0 1 0 4 4V4a5 5 0 0 0 5 5"/>',
+    zalo: '<path d="M21 11.5a8.5 8.5 0 0 1-12.2 7.6L3 20.5l1.4-4.9A8.5 8.5 0 1 1 21 11.5z"/><path d="M8.5 9h5l-5 6h5.5"/>',
+    youtube: '<path d="M2.5 17a24.12 24.12 0 0 1 0-10 2 2 0 0 1 1.4-1.4 49.56 49.56 0 0 1 16.2 0A2 2 0 0 1 21.5 7a24.12 24.12 0 0 1 0 10 2 2 0 0 1-1.4 1.4 49.55 49.55 0 0 1-16.2 0A2 2 0 0 1 2.5 17"/><path d="m10 15 5-3-5-3z"/>',
+    website: '<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>'
+  };
   var ALT_NOUN = { photo: 'ảnh', gif: 'GIF', video: 'video' };
   var THUMB_NOUN = { photo: 'Ảnh', gif: 'GIF', video: 'Video' };
   var BADGES = {
@@ -38,7 +58,18 @@
     stage: document.querySelector('[data-album-stage]'),
     prev: document.querySelector('[data-album-prev]'),
     next: document.querySelector('[data-album-next]'),
-    toast: document.querySelector('[data-album-toast]')
+    toast: document.querySelector('[data-album-toast]'),
+    brandLink: document.querySelector('.album-bar__brand'),
+    footer: document.querySelector('[data-album-footer]'),
+    cta: document.querySelector('[data-album-cta]'),
+    social: document.querySelector('[data-album-social]'),
+    ads: document.querySelector('[data-album-ads]'),
+    adsFrame: document.querySelector('[data-album-ads-frame]'),
+    adsTrack: document.querySelector('[data-album-ads-track]'),
+    adsDots: document.querySelector('[data-album-ads-dots]'),
+    sponsors: document.querySelector('[data-album-sponsors]'),
+    sponsorsList: document.querySelector('[data-album-sponsors-list]'),
+    themeColor: document.querySelector('meta[name="theme-color"]')
   };
   var reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -56,8 +87,18 @@
   var touchY = null;
   var wantedSrc = '';      // the preview the stage should end up showing
   var followThumb = true;  // scroll the strip to the selected thumb on the next render
+  var brandState = 'pending';  // 'pending' until /page answers, then 'default' or 'brand'
+  var page = null;         // HBAlbumCore.pageView, when brandState is 'brand'
+  var brandTimer = null;
+  var fallback = {};       // HappyBooth's own markup, which a branded page replaces
+  var ads = { key: '', index: 0, timer: null, stopped: false, count: 0, x: null, y: null };
 
   function init() {
+    api = core.apiBase(window.location.hostname);
+    fallback.bar = els.brandLink.innerHTML;
+    fallback.barLabel = els.brandLink.getAttribute('aria-label');
+    fallback.footer = els.footer.innerHTML;
+    fallback.cta = els.cta.textContent;
     code = core.readCode(window.location.search);
     if (!code) {
       apply({ kind: 'not_found', album: null, stale: false, offline: false });
@@ -65,7 +106,13 @@
     }
     // Show the short link, not /album?c=..., so what guests copy is what was printed.
     history.replaceState(null, '', '/' + code);
-    api = core.apiBase(window.location.hostname);
+    bindViewer();
+    document.addEventListener('visibilitychange', onVisibility);
+    loadBrand();
+    refresh();
+  }
+
+  function bindViewer() {
     els.thumbs.addEventListener('click', onThumbClick);
     els.prev.addEventListener('click', function () { go(-1); });
     els.next.addEventListener('click', function () { go(1); });
@@ -77,8 +124,6 @@
     document.addEventListener('keydown', onKey);
     els.stage.addEventListener('touchstart', onTouchStart, { passive: true });
     els.stage.addEventListener('touchend', onTouchEnd, { passive: true });
-    document.addEventListener('visibilitychange', onVisibility);
-    refresh();
   }
 
   /* ---------- Data ---------- */
@@ -116,6 +161,7 @@
   }
 
   function apply(next) {
+    if (next.kind === 'not_found') resolveBrand(null, true);
     var prevFiles = view && view.album && view.album.files;
     var album = next.album;
     if (album && album.files) {
@@ -140,7 +186,7 @@
     var event = album && album.event;
     var eventName = event && event.name;
     els.title.textContent = eventName || 'Ảnh của bạn';
-    document.title = (eventName ? eventName + ' — ' : '') + 'Ảnh của bạn — Happy Booth';
+    document.title = core.pageTitle(eventName, page);
 
     renderMessage(kind, album);
     renderThumbs(album, kind);
@@ -153,9 +199,10 @@
   function renderMessage(kind, album) {
     var event = album && album.event;
     var bannerUrl = event && url(event.banner_url);
+    // Without an event banner the art is the brand's logo: filled in below, once the brand is known.
     var art = bannerUrl
       ? '<img class="album-message__art" src="' + attr(bannerUrl) + '" alt="">'
-      : '<img class="album-message__art album-message__art--logo" src="/assets/icons/logo.svg" alt="">';
+      : '<span data-slot="art"></span>';
     var html = '';
     if (kind === 'not_found') {
       html = artLogo() +
@@ -165,8 +212,7 @@
     } else if (kind === 'expired') {
       html = art +
         '<p class="album-message__title">Link đã hết hạn</p>' +
-        '<p class="album-message__text">' + (event && event.name ? esc(event.name) + ': ' : '') +
-        'link xem ảnh chỉ có hiệu lực trong 15 ngày. Cần lấy lại ảnh? Gọi hotline ' + HOTLINE + '.</p>';
+        '<p class="album-message__text" data-slot="expired"></p>';
     } else if (kind === 'error') {
       html = '<div class="album-spinner" aria-hidden="true"></div>' +
         '<p class="album-message__title">Đang kết nối…</p>' +
@@ -181,6 +227,58 @@
     }
     els.message.innerHTML = html;
     els.message.hidden = html === '';
+    fillSlots(event);
+  }
+
+  // The parts of a message that depend on the brand.
+  function fillSlots(event) {
+    var art = els.message.querySelector('[data-slot="art"]');
+    if (art) art.replaceWith(brandArt());
+    var text = els.message.querySelector('[data-slot="expired"]');
+    if (!text) return;
+    var name = event && event.name;
+    var plain = (name ? esc(name) + ': ' : '') +
+      'link xem ảnh chỉ có hiệu lực trong 15 ngày. Cần lấy lại ảnh? Gọi hotline ' + HOTLINE + '.';
+    if (brandState === 'brand') {
+      var prefix = (name ? name + ': link' : 'Link') + ' xem ảnh đã hết hạn. ';
+      text.appendChild(contactSentence(prefix, 'Cần lấy lại ảnh? Gọi ', '.', 'Liên hệ ', ' để lấy lại ảnh.'));
+    } else if (brandState === 'pending') {
+      text.classList.add('is-skel');
+      text.innerHTML = '<span>' + plain + '</span>';
+    } else {
+      text.innerHTML = plain;
+    }
+  }
+
+  function brandArt() {
+    if (brandState === 'pending') {
+      var skel = node('div', 'album-message__art album-message__art--logo is-skel');
+      skel.setAttribute('aria-hidden', 'true');
+      return skel;
+    }
+    if (brandState === 'brand') {
+      if (!page.logoUrl) return document.createDocumentFragment();
+      var logo = node('img', 'album-message__art album-message__art--partner');
+      logo.src = page.logoUrl;
+      logo.alt = '';
+      return logo;
+    }
+    return node('img', 'album-message__art album-message__art--logo', null, { src: '/assets/icons/logo.svg', alt: '' });
+  }
+
+  // "<lead><with hotline: hotlineLead><tel link><hotlineTail>" or, without a hotline,
+  // "<lead><orgLead><org name><orgTail>". Partner strings only as text nodes.
+  function contactSentence(lead, hotlineLead, hotlineTail, orgLead, orgTail) {
+    var p = document.createDocumentFragment();
+    p.appendChild(document.createTextNode(lead));
+    if (page.hotline) {
+      p.appendChild(document.createTextNode(hotlineLead));
+      p.appendChild(telLink());
+      p.appendChild(document.createTextNode(hotlineTail));
+    } else {
+      p.appendChild(document.createTextNode(orgLead + page.orgName + orgTail));
+    }
+    return p;
   }
 
   function artLogo() {
@@ -387,10 +485,22 @@
       text = 'Nhiều người đang xem cùng lúc, trang sẽ cập nhật chậm hơn một chút…';
     } else if (view.offline && view.kind !== 'error') {
       text = 'Mất kết nối mạng, đang thử lại…';
-    } else if (view.stale) {
-      text = 'Một số ảnh chưa được tải lên. Vui lòng liên hệ hotline ' + HOTLINE + ' để được hỗ trợ.';
     }
-    els.notice.innerHTML = text;
+    if (text) {
+      els.notice.textContent = text;
+    } else if (view.stale) {
+      var plain = 'Một số ảnh chưa được tải lên. Vui lòng liên hệ hotline ' + HOTLINE + ' để được hỗ trợ.';
+      if (brandState === 'brand') {
+        els.notice.textContent = '';
+        els.notice.appendChild(contactSentence(
+          'Một số ảnh chưa được tải lên. ', 'Vui lòng liên hệ hotline ', ' để được hỗ trợ.', 'Vui lòng liên hệ ', ' để được hỗ trợ.'));
+      } else {
+        els.notice.innerHTML = brandState === 'pending' ? '<span>' + plain + '</span>' : plain;
+      }
+      text = plain;
+    } else {
+      els.notice.textContent = '';
+    }
     els.notice.hidden = text === '';
   }
 
@@ -525,6 +635,285 @@
     toastTimer = setTimeout(function () { els.toast.classList.remove('is-visible'); }, 2400);
   }
 
+  /* ---------- Partner branding ---------- */
+
+  function loadBrand() {
+    var controller = window.AbortController ? new AbortController() : null;
+    brandTimer = setTimeout(function () {
+      if (controller) controller.abort();
+      resolveBrand(null);
+    }, core.pageFetchTimeoutMs);
+    fetch(api + '/public/albums/' + code + '/page', {
+      cache: 'no-store',
+      signal: controller ? controller.signal : undefined
+    })
+      .then(function (res) { return res.ok ? res.json() : null; })
+      .catch(function () { return null; })
+      .then(function (body) { resolveBrand(core.pageView(body, { base: api })); });
+  }
+
+  // The first answer wins; the timeout, an error or `default` all mean the HappyBooth page.
+  function resolveBrand(v, quiet) {
+    if (brandState !== 'pending') return;
+    clearTimeout(brandTimer);
+    setBrand(v ? 'brand' : 'default', v);
+    if (view && !quiet) render();
+  }
+
+  function setBrand(state, v) {
+    brandState = state;
+    page = state === 'brand' ? v : null;
+    var root = document.documentElement;
+    root.setAttribute('data-brand', state);
+    if (page) {
+      root.setAttribute('data-theme', page.theme);
+      root.style.setProperty('--brand', page.color);
+      root.style.setProperty('--brand-ink', page.ink);
+      if (page.theme === 'minimal') loadSerif();
+    } else {
+      root.removeAttribute('data-theme');
+      root.style.removeProperty('--brand');
+      root.style.removeProperty('--brand-ink');
+    }
+    els.themeColor.setAttribute('content', core.themeColor(page));
+    renderBar();
+    renderFooter();
+    renderCta();
+    renderSocial();
+    renderSponsors();
+    renderAds();
+  }
+
+  // The serif of the minimal theme is only fetched when a page uses it.
+  function loadSerif() {
+    if (document.querySelector('link[data-serif]')) return;
+    var link = node('link', null, null, { rel: 'stylesheet', href: SERIF_CSS, 'data-serif': '' });
+    document.head.appendChild(link);
+  }
+
+  // Partner links open in a new tab.
+  function setLink(a, href, external) {
+    a.removeAttribute('target');
+    a.removeAttribute('rel');
+    a.setAttribute('href', href);
+    if (external) {
+      a.setAttribute('target', '_blank');
+      a.setAttribute('rel', 'noopener noreferrer sponsored');
+    }
+  }
+
+  function telLink() {
+    var a = node('a', null, page.hotline);
+    setLink(a, page.hotlineHref, false);
+    return a;
+  }
+
+  function renderBar() {
+    var a = els.brandLink;
+    if (brandState === 'pending') return;
+    if (!page) {
+      a.innerHTML = fallback.bar;
+      a.setAttribute('aria-label', fallback.barLabel);
+      a.setAttribute('href', '/');
+      a.removeAttribute('target');
+      a.removeAttribute('rel');
+      return;
+    }
+    a.textContent = '';
+    var name = node('strong', 'album-bar__org', page.orgName);
+    if (page.logoUrl) {
+      var logo = node('img', 'album-bar__logo', null, { alt: page.orgName, height: '32' });
+      logo.onerror = function () { logo.replaceWith(name); };
+      logo.src = page.logoUrl;
+      a.appendChild(logo);
+    } else {
+      a.appendChild(name);
+    }
+    a.setAttribute('aria-label', page.orgName);
+    if (page.website) {
+      setLink(a, page.website.href, true);
+    } else {
+      a.removeAttribute('href');
+      a.removeAttribute('target');
+      a.removeAttribute('rel');
+    }
+  }
+
+  function renderFooter() {
+    var f = els.footer;
+    if (brandState === 'pending') return;
+    if (!page) {
+      f.innerHTML = fallback.footer;
+      return;
+    }
+    f.textContent = '';
+    var parts = [node('span', null, page.orgName)];
+    if (page.hotline) parts.push(telLink());
+    if (page.website) {
+      var site = node('a', null, page.website.label);
+      setLink(site, page.website.href, true);
+      parts.push(site);
+    }
+    var line = node('div', 'album-footer__line');
+    parts.forEach(function (part, i) {
+      if (i) line.appendChild(document.createTextNode(' · '));
+      line.appendChild(part);
+    });
+    f.appendChild(line);
+    if (page.poweredBy) {
+      var powered = node('div', 'album-footer__powered', 'Powered by ');
+      powered.appendChild(node('a', null, 'Happy Booth', { href: '/' }));
+      f.appendChild(powered);
+    }
+  }
+
+  function renderCta() {
+    if (brandState === 'pending') return;
+    var a = els.cta;
+    if (!page) {
+      a.hidden = false;
+      a.textContent = fallback.cta;
+      a.setAttribute('href', '/price');
+      a.removeAttribute('target');
+      a.removeAttribute('rel');
+    } else if (page.cta) {
+      a.hidden = false;
+      a.textContent = page.cta.label;
+      setLink(a, page.cta.href, true);
+    } else {
+      a.hidden = true;
+    }
+    els.event.classList.toggle('album-event--no-cta', !!page && !page.cta);
+  }
+
+  function renderSocial() {
+    els.social.textContent = '';
+    if (page) {
+      page.social.forEach(function (s) {
+        els.social.appendChild(iconLink(s.kind, SOCIAL_LABEL[s.kind], s.href));
+      });
+      if (page.website) els.social.appendChild(iconLink('website', 'Website ' + page.website.label, page.website.href));
+    }
+    els.social.hidden = !els.social.childNodes.length;
+  }
+
+  function iconLink(kind, label, href) {
+    var a = node('a', null, null, { 'aria-label': label, title: label });
+    a.innerHTML = '<svg ' + ICON_ATTRS + '>' + SOCIAL_ICON[kind] + '</svg>';
+    setLink(a, href, true);
+    return a;
+  }
+
+  function renderSponsors() {
+    els.sponsorsList.textContent = '';
+    var list = page ? page.sponsors : [];
+    list.forEach(function (sp) {
+      var inner = sp.href ? node('a', 'album-sponsors__link') : node('span', 'album-sponsors__link');
+      if (sp.href) setLink(inner, sp.href, true);
+      inner.appendChild(node('img', null, null, { src: sp.logoUrl, alt: sp.name, loading: 'lazy', decoding: 'async' }));
+      var li = node('li', 'album-sponsors__item');
+      li.appendChild(inner);
+      els.sponsorsList.appendChild(li);
+    });
+    els.sponsors.hidden = list.length === 0;
+  }
+
+  /* ---------- Partner banners ---------- */
+
+  function renderAds() {
+    var banners = page ? page.banners : [];
+    var key = JSON.stringify(banners);
+    // A preview draft is posted after every edit: rebuild only when the banners changed.
+    if (key !== ads.key) {
+      ads.key = key;
+      buildAds(banners);
+    }
+    els.ads.hidden = banners.length === 0;
+  }
+
+  function buildAds(banners) {
+    stopAds();
+    els.adsTrack.textContent = '';
+    els.adsDots.textContent = '';
+    ads.index = 0;
+    ads.count = banners.length;
+    ads.stopped = reduceMotion;  // reduced motion: the guest swipes, nothing moves by itself
+    els.adsTrack.style.transform = '';
+    banners.forEach(function (b, i) {
+      var link = node('a');
+      setLink(link, b.href, true);
+      link.appendChild(node('img', null, null, { src: b.imageUrl, alt: b.alt, draggable: 'false', decoding: 'async' }));
+      var li = node('li', 'album-ads__slide');
+      li.appendChild(link);
+      els.adsTrack.appendChild(li);
+      if (banners.length > 1) {
+        var dot = node('button', 'album-ads__dot', null, { type: 'button', 'data-index': String(i), 'aria-label': 'Banner ' + (i + 1) + '/' + banners.length });
+        els.adsDots.appendChild(dot);
+      }
+    });
+    if (banners.length) showAd(0);
+    startAds();
+  }
+
+  function showAd(i) {
+    ads.index = i;
+    els.adsTrack.style.transform = 'translateX(' + (-100 * i) + '%)';
+    var links = els.adsTrack.querySelectorAll('a');
+    var dots = els.adsDots.querySelectorAll('.album-ads__dot');
+    for (var n = 0; n < links.length; n++) {
+      links[n].setAttribute('tabindex', n === i ? '0' : '-1');
+      links[n].parentNode.setAttribute('aria-hidden', n === i ? 'false' : 'true');
+    }
+    for (var d = 0; d < dots.length; d++) dots[d].setAttribute('aria-current', d === i ? 'true' : 'false');
+  }
+
+  function startAds() {
+    if (ads.stopped || ads.count < 2 || ads.timer) return;
+    ads.timer = setInterval(function () {
+      if (document.hidden || !els.ads.offsetParent) return;
+      showAd(core.carouselIndex(ads.index, 1, ads.count));
+    }, AD_ROTATE_MS);
+  }
+
+  function stopAds() {
+    clearInterval(ads.timer);
+    ads.timer = null;
+  }
+
+  // Once the guest touches the carousel it never moves by itself again.
+  function holdAds() {
+    ads.stopped = true;
+    stopAds();
+  }
+
+  function onAdsTouchStart(e) {
+    holdAds();
+    var one = e.touches.length === 1 ? e.touches[0] : null;
+    ads.x = one ? one.clientX : null;
+    ads.y = one ? one.clientY : null;
+  }
+
+  function onAdsTouchEnd(e) {
+    if (ads.x === null) return;
+    var t = e.changedTouches[0];
+    var scale = window.visualViewport ? window.visualViewport.scale : 1;
+    var direction = core.swipeDirection(t.clientX - ads.x, t.clientY - ads.y, scale);
+    ads.x = ads.y = null;
+    if (direction) showAd(core.carouselIndex(ads.index, direction, ads.count));
+  }
+
+  function onAdsDot(e) {
+    var dot = e.target.closest('.album-ads__dot');
+    if (!dot) return;
+    holdAds();
+    showAd(Number(dot.getAttribute('data-index')));
+  }
+
+  els.adsFrame.addEventListener('touchstart', onAdsTouchStart, { passive: true });
+  els.adsFrame.addEventListener('touchend', onAdsTouchEnd, { passive: true });
+  els.adsFrame.addEventListener('focusin', holdAds);
+  els.adsDots.addEventListener('click', onAdsDot);
+
   /* ---------- Helpers ---------- */
 
   function esc(s) {
@@ -539,6 +928,14 @@
 
   function url(u) {
     return core.apiUrl(u, api);
+  }
+
+  function node(tag, cls, text, attrs) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined && text !== null) n.textContent = text;
+    if (attrs) for (var k in attrs) n.setAttribute(k, attrs[k]);
+    return n;
   }
 
   init();
